@@ -2,6 +2,10 @@
 
 /* Copy to configuration.h and fill in your values:
  *   cp Components/esp32-at/Inc/configuration.h.example Components/esp32-at/Inc/configuration.h
+ *
+ * GitHub Actions OTA releases use scripts/generate-configuration.py with
+ * repository secrets (WIFI_SSID, WIFI_PWD) and variables (IOT_THING_NAME,
+ * AWS_IOT_ENDPOINT). Local builds use this file directly.
  */
 
 #define WIFI_SSID "your-wifi-ssid"

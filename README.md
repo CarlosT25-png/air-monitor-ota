@@ -37,8 +37,10 @@ Copy [`aws.md.example`](aws.md.example) to `aws.md`  and fill in your account de
 
 GitHub Actions:
 
-- CI: builds firmware on every push/PR
-- OTA Release: on `v*.*.*` tags or manual dispatch; deploys via OIDC to S3 + IoT OTA
+- CI: builds firmware on every push/PR (placeholder WiFi — compile check only)
+- OTA Release: on `v*.*.*` tags or manual dispatch; builds with `WIFI_SSID` / `WIFI_PWD` secrets and deploys via OIDC to S3 + IoT OTA
+
+Before your first OTA release, set GitHub **secrets** `WIFI_SSID`, `WIFI_PWD` and **variables** `AWS_IOT_ENDPOINT`, `IOT_THING_NAME` (see `aws.md.example`).
 
 I included a `aws.md.example` for GitHub Variables, OIDC IAM setup and manual CLI commands.
 

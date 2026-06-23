@@ -84,10 +84,20 @@ aws iot create-ota-update \
 | `AWS_REGION` | e.g. `us-east-2` |
 | `AWS_ACCOUNT_ID` | 12-digit account ID |
 | `AWS_ROLE_ARN` | IAM role for GitHub OIDC (`github-ota-deploy`) |
-| `IOT_THING_NAME` | IoT thing name |
+| `IOT_THING_NAME` | IoT thing name (also `CLIENT_ID` in firmware) |
+| `AWS_IOT_ENDPOINT` | IoT data endpoint hostname (e.g. `xxxx-ats.iot.us-east-2.amazonaws.com`) |
+| `UTC_OFFSET` | Optional; hours from UTC (default `-6`) |
+| `MQTT_TOPIC` | Optional; publish topic (default `sensor/kitchen/data`) |
 | `OTA_S3_BUCKET` | Firmware bucket |
 | `OTA_STREAM_ID` | IoT stream ID |
 | `OTA_ROLE_ARN` | IoT OTA service role (`ota-role`) |
+
+### GitHub secrets (repository or `production` environment)
+
+| `WIFI_SSID` | WiFi network name baked into OTA firmware |
+| `WIFI_PWD` | WiFi password |
+
+CI builds use placeholders only. **OTA Release** requires these secrets so devices keep working after OTA.
 
 ### GitHub environment
 

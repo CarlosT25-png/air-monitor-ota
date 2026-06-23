@@ -18,6 +18,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -50,8 +51,26 @@ jobs:
           sudo apt-get install -y ninja-build
           pip install cbor2 click intelhex
 
-      - name: Prepare local configuration
-        run: cp Components/esp32-at/Inc/configuration.h.example Components/esp32-at/Inc/configuration.h
+      - name: Generate device configuration
+        env:
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PWD: ${{ secrets.WIFI_PWD }}
+          IOT_THING_NAME: ${{ vars.IOT_THING_NAME }}
+          DOMAIN_NAME: ${{ vars.AWS_IOT_ENDPOINT }}
+          UTC_OFFSET: ${{ vars.UTC_OFFSET }}
+          MQTT_TOPIC: ${{ vars.MQTT_TOPIC }}
+        run: |
+          missing=0
+          for name in WIFI_SSID WIFI_PWD IOT_THING_NAME DOMAIN_NAME; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing ${name}. Set WIFI_* as repository/environment secrets and AWS_IOT_ENDPOINT + IOT_THING_NAME as variables (see aws.md.example)."
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+          python3 scripts/generate-configuration.py
 
       - name: Configure
         run: cmake --preset Release -DFW_VERSION=${{ steps.version.outputs.version }}
