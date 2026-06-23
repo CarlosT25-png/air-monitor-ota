@@ -79,6 +79,9 @@ static int ota_request_stream_blocks(void);
 static int ota_handle_stream_block(const uint8_t *cbor_data, uint16_t cbor_len);
 static void ota_process_pending_tx(void);
 static void ota_queue_block_followup(int32_t block_id);
+static int ota_extract_file_version(const char *file_name, char *ver_out, size_t ver_len);
+static int ota_running_version_is(const char *job_ver);
+static void ota_skip_job_up_to_date(const char *job_ver);
 
 static void ota_stream_cbor_reset(void)
 {
@@ -384,6 +387,82 @@ static int ota_copy_json_number(const char *json, const char *key, uint32_t *val
     return 0;
 }
 
+static int ota_extract_file_version(const char *file_name, char *ver_out, size_t ver_len)
+{
+    static const char prefix[] = "air-monitor-ota-";
+    static const char suffix[] = ".signed.bin";
+    const char *base;
+    const char *start;
+    const char *end;
+    size_t ver_strlen;
+
+    if (file_name == NULL || ver_out == NULL || ver_len == 0U)
+    {
+        return -1;
+    }
+
+    base = strrchr(file_name, '/');
+    base = (base != NULL) ? (base + 1) : file_name;
+
+    start = strstr(base, prefix);
+    if (start != NULL)
+    {
+        start += sizeof(prefix) - 1U;
+    }
+    else
+    {
+        start = base;
+    }
+
+    end = strstr(start, suffix);
+    if (end == NULL || end == start)
+    {
+        return -1;
+    }
+
+    ver_strlen = (size_t)(end - start);
+    if (ver_strlen >= ver_len)
+    {
+        return -1;
+    }
+
+    memcpy(ver_out, start, ver_strlen);
+    ver_out[ver_strlen] = '\0';
+    return 0;
+}
+
+static int ota_running_version_is(const char *job_ver)
+{
+    struct image_version running;
+    char running_ver[24];
+
+    if (job_ver == NULL || job_ver[0] == '\0')
+    {
+        return 0;
+    }
+
+    if (mcuboot_app_get_running_version(&running) != 0)
+    {
+        return 0;
+    }
+
+    if (mcuboot_app_format_version(&running, running_ver, sizeof(running_ver)) <= 0)
+    {
+        return 0;
+    }
+
+    return (strcmp(running_ver, job_ver) == 0);
+}
+
+static void ota_skip_job_up_to_date(const char *job_ver)
+{
+    printf("OTA skip: already running v%s\r\n", job_ver);
+    fflush(stdout);
+    s_state = OTA_STATE_IDLE;
+    (void)ota_publish_job_status("SUCCEEDED", "already up to date");
+    s_active_job_id[0] = '\0';
+}
+
 static int ota_parse_job_document(const char *json)
 {
     const char *doc = strstr(json, "jobDocument");
@@ -621,6 +700,18 @@ static void ota_on_mqtt_message(const char *topic, const uint8_t *payload, uint1
         if (s_active_job_id[0] != '\0' && strcmp(s_job_id, s_active_job_id) == 0)
         {
             return;
+        }
+
+        {
+            char job_ver[24];
+
+            if (s_file_name[0] != '\0' &&
+                ota_extract_file_version(s_file_name, job_ver, sizeof(job_ver)) == 0 &&
+                ota_running_version_is(job_ver))
+            {
+                ota_skip_job_up_to_date(job_ver);
+                return;
+            }
         }
 
         strncpy(s_active_job_id, s_job_id, sizeof(s_active_job_id) - 1U);
