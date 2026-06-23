@@ -174,7 +174,7 @@ jobs:
           OTA_UPDATE_ID: ${{ steps.ota_job.outputs.ota_update_id }}
         run: |
           for i in $(seq 1 30); do
-            STATUS=$(aws iot get-ota-update --region "${AWS_REGION}" --ota-update-id "${OTA_UPDATE_ID}" --query otaUpdateStatus --output text)
+            STATUS=$(aws iot get-ota-update --region "${AWS_REGION}" --ota-update-id "${OTA_UPDATE_ID}" --query otaUpdateInfo.otaUpdateStatus --output text)
             echo "OTA update status: ${STATUS}"
             case "${STATUS}" in
               CREATE_COMPLETE) exit 0 ;;

@@ -398,6 +398,14 @@ int ota_init(void)
 
     printf("OTA agent ready (notify-next subscribed)\r\n");
     fflush(stdout);
+
+    /* Pick up jobs that were queued while the device was offline. */
+    if (ota_request_next_job() != 0)
+    {
+        printf("OTA pending job poll failed\r\n");
+        fflush(stdout);
+    }
+
     return 0;
 }
 
