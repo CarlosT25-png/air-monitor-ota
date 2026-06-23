@@ -1,0 +1,18 @@
+#pragma once
+
+#include <stdint.h>
+
+#define FLASH_DEVICE_BASE           0x08000000U
+
+#define MCUBOOT_FLASH_SIZE          0x0000C000U  /* 48 KB */
+#define SLOT0_FLASH_OFFSET          0x0000C000U
+#define SLOT0_FLASH_SIZE            0x00034000U  /* 208 KB */
+#define SLOT1_FLASH_OFFSET          0x00040000U
+#define SLOT1_FLASH_SIZE            0x00040000U  /* 256 KB (Bank2) */
+
+#define SLOT0_FLASH_ADDRESS         (FLASH_DEVICE_BASE + SLOT0_FLASH_OFFSET)
+#define SLOT1_FLASH_ADDRESS         (FLASH_DEVICE_BASE + SLOT1_FLASH_OFFSET)
+
+#define MCUBOOT_FLASH_PAGE_SIZE     2048U
+#define MCUBOOT_FLASH_WRITE_ALIGN   8U
+#define MCUBOOT_IMAGE_HEADER_SIZE   0x200U

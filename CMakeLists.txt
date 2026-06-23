@@ -1,69 +1,81 @@
 cmake_minimum_required(VERSION 3.22)
 
-#
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
-#
-# User is free to modify the file as much as necessary
-#
-
-# Setup compiler settings
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-
-# Define the build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
-# Set the project name
-set(CMAKE_PROJECT_NAME test-at)
-
-# Enable compile command to ease indexing with e.g. clangd
+set(CMAKE_PROJECT_NAME air-monitor-ota)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
-# Core project settings
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/Components/esp32-at/Inc/configuration.h")
+    message(FATAL_ERROR
+        "Missing Components/esp32-at/Inc/configuration.h — "
+        "copy configuration.h.example to configuration.h and edit your settings.")
+endif()
+
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
+get_filename_component(TOOLCHAIN_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+set(CMAKE_OBJCOPY "${TOOLCHAIN_BIN_DIR}/arm-none-eabi-objcopy")
+set(CMAKE_SIZE "${TOOLCHAIN_BIN_DIR}/arm-none-eabi-size")
+
 enable_language(C ASM)
 
-# Create an executable object type
+include(${CMAKE_SOURCE_DIR}/cmake/mcuboot.cmake)
+message("Firmware version: ${FW_VERSION}")
+
 add_executable(${CMAKE_PROJECT_NAME})
-
-# Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+add_subdirectory(bootloader)
 
-# Link directories setup
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-)
-
-# Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Components/esp32-at/Src/esp32-at.c
     Components/dht11/Src/dht11.c
+    Components/flash/Src/flash.c
+    Components/ota/Src/ota.c
+    Components/ota/Src/ota_cbor.c
+    Components/mcuboot_app/Src/mcuboot_app.c
+    ${MCUBOOT_BOOTUTIL}/src/bootutil_public.c
+    ${MCUBOOT_PORT_DIR}/Src/flash_map_backend.c
+    ${MCUBOOT_PORT_DIR}/Src/flash_hal.c
 )
 
-# Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Components/esp32-at/Inc
     Components/dht11/Inc
+    Components/flash/Inc
+    Components/ota/Inc
+    Components/mcuboot_app/Inc
+    ${MCUBOOT_PORT_INCLUDES}
 )
 
-# Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
+    USER_VECT_TAB_ADDRESS
+    VECT_TAB_BASE_ADDRESS=0x08000000U
+    VECT_TAB_OFFSET=0x0000C200U
+    MCUBOOT_HAVE_LOGGING=0
+    FW_VERSION_STR="${FW_VERSION}"
 )
 
-# Remove wrong libob.a library dependency when using cpp files
+mcuboot_apply_app_includes(${CMAKE_PROJECT_NAME})
+
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
-
-    # Add user defined libraries
 )
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "-T${CMAKE_SOURCE_DIR}/STM32G474XX_APP.ld"
+    "-Wl,-Map=${CMAKE_PROJECT_NAME}.map"
+)
+
+find_program(PYTHON3_EXECUTABLE python3)
+if(PYTHON3_EXECUTABLE)
+    mcuboot_add_app_signing(${CMAKE_PROJECT_NAME})
+endif()

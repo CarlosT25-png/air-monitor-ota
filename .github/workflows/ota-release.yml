@@ -1,0 +1,149 @@
+name: OTA Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Firmware semver (e.g. 1.1.0). Defaults to VERSION file."
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(tr -d '[:space:]' < VERSION)"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Firmware version: ${VERSION}"
+
+      - name: Install ARM GCC
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: 14.3.Rel1
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          pip install cbor2 click intelhex
+
+      - name: Prepare local configuration
+        run: cp Components/esp32-at/Inc/configuration.h.example Components/esp32-at/Inc/configuration.h
+
+      - name: Configure
+        run: cmake --preset Release -DFW_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Build
+        run: cmake --build build/Release
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ota-${{ steps.version.outputs.version }}
+          retention-days: 30
+          path: |
+            build/Release/air-monitor-ota-ota.signed.bin
+            build/Release/air-monitor-ota.signed.bin
+            build/Release/bootloader/mcuboot.bin
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-ota-${{ needs.build.outputs.version }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload firmware to S3
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          BUCKET: ${{ vars.OTA_S3_BUCKET }}
+        run: |
+          S3_KEY="ota-update/air-monitor-ota-${VERSION}.signed.bin"
+          aws s3 cp air-monitor-ota-ota.signed.bin "s3://${BUCKET}/${S3_KEY}"
+          echo "S3_KEY=${S3_KEY}" >> "$GITHUB_ENV"
+
+      - name: Update IoT stream
+        env:
+          BUCKET: ${{ vars.OTA_S3_BUCKET }}
+          STREAM_ID: ${{ vars.OTA_STREAM_ID }}
+          OTA_IAM_ROLE: ${{ vars.OTA_ROLE_ARN }}
+        run: |
+          aws iot update-stream \
+            --stream-id "${STREAM_ID}" \
+            --description "STM32 OTA firmware stream" \
+            --files "[{\"fileId\":0,\"s3Location\":{\"bucket\":\"${BUCKET}\",\"key\":\"${S3_KEY}\"}}]" \
+            --role-arn "${OTA_IAM_ROLE}"
+
+      - name: Create OTA update job
+        id: ota_job
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          REGION: ${{ vars.AWS_REGION }}
+          THING: ${{ vars.IOT_THING_NAME }}
+          STREAM_ID: ${{ vars.OTA_STREAM_ID }}
+          OTA_IAM_ROLE: ${{ vars.OTA_ROLE_ARN }}
+        run: |
+          FILE_NAME="air-monitor-ota-${VERSION}.signed.bin"
+          OTA_UPDATE_ID="air-monitor-ota-${VERSION}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            OTA_UPDATE_ID="air-monitor-ota-${VERSION}-${GITHUB_SHA::7}"
+          fi
+
+          aws iot create-ota-update \
+            --ota-update-id "${OTA_UPDATE_ID}" \
+            --targets "arn:aws:iot:${REGION}:${ACCOUNT_ID}:thing/${THING}" \
+            --files "[{\"fileName\":\"${FILE_NAME}\",\"fileLocation\":{\"stream\":{\"streamId\":\"${STREAM_ID}\",\"fileId\":0}}}]" \
+            --role-arn "${OTA_IAM_ROLE}" \
+            --protocols MQTT \
+            --target-selection SNAPSHOT
+
+          echo "ota_update_id=${OTA_UPDATE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for OTA job creation
+        env:
+          OTA_UPDATE_ID: ${{ steps.ota_job.outputs.ota_update_id }}
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(aws iot get-ota-update --ota-update-id "${OTA_UPDATE_ID}" --query otaUpdateStatus --output text)
+            echo "OTA update status: ${STATUS}"
+            case "${STATUS}" in
+              CREATE_COMPLETE) exit 0 ;;
+              CREATE_FAILED) exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for OTA job"
+          exit 1

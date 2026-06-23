@@ -1,0 +1,25 @@
+#pragma once
+
+/* Copy to configuration.h and fill in your values:
+ *   cp Components/esp32-at/Inc/configuration.h.example Components/esp32-at/Inc/configuration.h
+ */
+
+#define WIFI_SSID "your-wifi-ssid"
+#define WIFI_PWD  "your-wifi-password"
+
+#define UTC_OFFSET -6
+#define CLIENT_ID  "your-iot-thing-name"
+#define DOMAIN_NAME "xxxxxxxxxxxxx-ats.iot.us-east-2.amazonaws.com"
+
+#define MQTT_TOPIC "sensor/kitchen/data"
+
+#define MQTT_PUBLISH_INTERVAL_MS 60000U
+#define MQTT_QOS                 0U
+#define MQTT_RETAIN              0U
+
+#define ESP32_INIT_MAX_RETRIES     5U
+#define ESP32_INIT_RETRY_DELAY_MS  500U
+#define ESP32_AWS_MAX_RETRIES      3U
+
+#define OTA_THING_NAME          CLIENT_ID
+#define OTA_STREAM_TIMEOUT_MS   120000U

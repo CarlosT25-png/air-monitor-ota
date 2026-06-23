@@ -5,8 +5,9 @@
 #include <string.h>
 
 #define MAX_AT_CMD_SIZE        256U
-#define MAX_RX_BUFFER_SIZE     512U
-#define UART4_RING_SIZE        1024U
+#define MAX_RX_BUFFER_SIZE     2048U
+#define UART4_RING_SIZE        16384U
+#define MQTT_STREAM_BUF_SIZE   16384U
 #define AT_CMD_TERMINATOR      "\r\n"
 #define AT_OK_STRING           "OK"
 #define AT_CMD_TIMEOUT_MS      5000U
@@ -14,8 +15,10 @@
 
 static char at_cmd[MAX_AT_CMD_SIZE];
 static char rx_buffer[MAX_RX_BUFFER_SIZE];
-static char mqtt_stream_buf[MAX_RX_BUFFER_SIZE];
+static char mqtt_stream_buf[MQTT_STREAM_BUF_SIZE];
 static uint16_t mqtt_stream_len;
+static esp32_mqtt_msg_cb_t s_mqtt_msg_cb;
+static void *s_mqtt_msg_ctx;
 static uint8_t uart4_ring[UART4_RING_SIZE];
 static volatile uint16_t uart4_ring_head;
 static volatile uint16_t uart4_ring_tail;
@@ -67,7 +70,7 @@ static void uart4_forward_ring_to_mqtt_stream(void)
   uart4_hw_drain_to_ring();
   while (uart4_ring_pop(&byte))
   {
-    if (mqtt_stream_len < (MAX_RX_BUFFER_SIZE - 1U))
+    if (mqtt_stream_len < (MQTT_STREAM_BUF_SIZE - 1U))
     {
       mqtt_stream_buf[mqtt_stream_len++] = (char)byte;
       mqtt_stream_buf[mqtt_stream_len] = '\0';
@@ -573,6 +576,34 @@ static void esp32_mqtt_print_payload(const char *topic, const char *payload)
   fflush(stdout);
 }
 
+void ESP32_MQTT_SetMessageCallback(esp32_mqtt_msg_cb_t cb, void *ctx)
+{
+  s_mqtt_msg_cb = cb;
+  s_mqtt_msg_ctx = ctx;
+}
+
+static void esp32_mqtt_dispatch(const char *topic, const uint8_t *payload, uint16_t data_len)
+{
+  if (s_mqtt_msg_cb != NULL)
+  {
+    s_mqtt_msg_cb(topic, payload, data_len, s_mqtt_msg_ctx);
+    return;
+  }
+
+  if (data_len < 128U)
+  {
+    char text[128];
+    memcpy(text, payload, data_len);
+    text[data_len] = '\0';
+    esp32_mqtt_print_payload(topic, text);
+  }
+  else
+  {
+    printf("MQTT recv [%s]: %u bytes\r\n", topic, data_len);
+    fflush(stdout);
+  }
+}
+
 static void esp32_mqtt_process_stream(void)
 {
   char *msg;
@@ -583,7 +614,6 @@ static void esp32_mqtt_process_stream(void)
     char topic[128];
     int link_id = 0;
     int data_len = 0;
-    char payload[128];
 
     if (sscanf(msg, "+MQTTSUBRECV:%d,\"%127[^\"]\",%d,", &link_id, topic, &data_len) != 3)
     {
@@ -607,19 +637,17 @@ static void esp32_mqtt_process_stream(void)
     }
     payload_start++;
 
-    if (data_len <= 0 || data_len >= (int)sizeof(payload))
+    if (data_len <= 0)
     {
       break;
     }
 
-    if ((uint16_t)((payload_start - mqtt_stream_buf) + data_len) > mqtt_stream_len)
+    if ((uint32_t)((payload_start - mqtt_stream_buf) + data_len) > mqtt_stream_len)
     {
       break;
     }
 
-    memcpy(payload, payload_start, (size_t)data_len);
-    payload[data_len] = '\0';
-    esp32_mqtt_print_payload(topic, payload);
+    esp32_mqtt_dispatch(topic, (const uint8_t *)payload_start, (uint16_t)data_len);
 
     payload_start += data_len;
     while (payload_start < (mqtt_stream_buf + mqtt_stream_len) &&
@@ -636,7 +664,7 @@ static void esp32_mqtt_process_stream(void)
     }
   }
 
-  if (mqtt_stream_len >= (MAX_RX_BUFFER_SIZE - 1U))
+  if (mqtt_stream_len >= (MQTT_STREAM_BUF_SIZE - 1U))
   {
     mqtt_stream_len = 0U;
     mqtt_stream_buf[0] = '\0';

@@ -37,3 +37,5 @@ Wifi_Status_t ESP32_Connect_AWS(void);
 Wifi_Status_t ESP32_MQTT_Publish(const char *topic, const uint8_t *payload, uint16_t payload_len, uint8_t qos, uint8_t retain);
 Wifi_Status_t ESP32_MQTT_Subscribe(const char *topic_filter, uint8_t qos);
 void ESP32_MQTT_Poll(void);
+typedef void (*esp32_mqtt_msg_cb_t)(const char *topic, const uint8_t *payload, uint16_t len, void *ctx);
+void ESP32_MQTT_SetMessageCallback(esp32_mqtt_msg_cb_t cb, void *ctx);

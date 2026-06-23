@@ -2,3 +2,4 @@ build
 mx.scratch
 !.settings
 aws.md
+Components/esp32-at/Inc/configuration.h

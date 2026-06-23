@@ -1,0 +1,200 @@
+# AWS IoT OTA for STM32G474 + ESP32-AT
+
+Copy this file to `aws.md` and replace placeholders with your values.
+
+Region: **${AWS_REGION}**  
+Thing: **${IOT_THING_NAME}**  
+OTA stream: **${OTA_STREAM_ID}**  
+S3 bucket: **${OTA_S3_BUCKET}**
+
+## Flash layout
+
+
+MCUboot | `0x08000000` - 48 KB - `build/Release/bootloader/mcuboot.bin`
+ - Slot 0 (app) | `0x0800C000` - 208 KB - `build/Release/air-monitor-ota.signed.bin`
+ - Slot 1 (OTA staging) | `0x08040000` - 256 KB - written by OTA agent
+
+The signed image places a 0x200 MCUboot image header at `0x0800C000`; application code/vectors run at `0x0800C200`.
+
+## Build and sign firmware
+
+```bash
+cp Components/esp32-at/Inc/configuration.h.example Components/esp32-at/Inc/configuration.h
+# edit configuration.h with your WiFi and AWS endpoint
+
+cmake --preset Release
+cmake --build build/Release
+```
+
+Outputs:
+
+- `build/Release/bootloader/mcuboot.bin` —  bootloader
+- `build/Release/air-monitor-ota.signed.bin` — signed for slot 0 (USB flash)
+- `build/Release/air-monitor-ota-ota.signed.bin` — signed for slot 1 (AWS OTA upload)
+
+## Flash workflow (st-flash)
+
+
+```bash
+st-flash write build/Release/bootloader/mcuboot.bin 0x08000000
+st-flash write build/Release/air-monitor-ota.signed.bin 0x0800C000
+st-flash reset
+```
+
+## Create OTA stream (one-time)
+
+```bash
+aws iot create-stream \
+  --region ${AWS_REGION} \
+  --stream-id ${OTA_STREAM_ID} \
+  --description "STM32 OTA firmware stream" \
+  --files '[{"fileId": 0, "s3Location": {"bucket": "${OTA_S3_BUCKET}", "key": "ota-update/air-monitor-ota-1.0.0.signed.bin"}}]' \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/ota-role
+```
+
+## Manual OTA release
+
+```bash
+VERSION=$(tr -d '[:space:]' < VERSION)
+
+aws s3 cp build/Release/air-monitor-ota-ota.signed.bin \
+  s3://${OTA_S3_BUCKET}/ota-update/air-monitor-ota-${VERSION}.signed.bin \
+  --region ${AWS_REGION}
+
+aws iot update-stream \
+  --region ${AWS_REGION} \
+  --stream-id ${OTA_STREAM_ID} \
+  --files "[{\"fileId\":0,\"s3Location\":{\"bucket\":\"${OTA_S3_BUCKET}\",\"key\":\"ota-update/air-monitor-ota-${VERSION}.signed.bin\"}}]" \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/ota-role
+
+aws iot create-ota-update \
+  --region ${AWS_REGION} \
+  --ota-update-id air-monitor-ota-${VERSION} \
+  --targets arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:thing/${IOT_THING_NAME} \
+  --files "[{\"fileName\":\"air-monitor-ota-${VERSION}.signed.bin\",\"fileLocation\":{\"stream\":{\"streamId\":\"${OTA_STREAM_ID}\",\"fileId\":0}}}]" \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/ota-role \
+  --protocols MQTT \
+  --target-selection SNAPSHOT
+```
+
+## GitHub Actions OTA deploy
+
+### Repository variables
+
+| `AWS_REGION` | e.g. `us-east-2` |
+| `AWS_ACCOUNT_ID` | 12-digit account ID |
+| `AWS_ROLE_ARN` | IAM role for GitHub OIDC (`github-ota-deploy`) |
+| `IOT_THING_NAME` | IoT thing name |
+| `OTA_S3_BUCKET` | Firmware bucket |
+| `OTA_STREAM_ID` | IoT stream ID |
+| `OTA_ROLE_ARN` | IoT OTA service role (`ota-role`) |
+
+### GitHub environment
+
+Create a **production** environment and enable required reviewers (recommended for a public repo).
+
+### AWS OIDC role (`github-ota-deploy`)
+
+Trust policy (replace `ORG` and `REPO`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": [
+            "repo:ORG/REPO:ref:refs/tags/v*",
+            "repo:ORG/REPO:environment:production"
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+Permissions policy (least privilege):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::${OTA_S3_BUCKET}/ota-update/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:UpdateStream",
+        "iot:CreateOTAUpdate",
+        "iot:GetOTAUpdate"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Triggers
+
+-*Tag push `v1.1.0` - build, upload to S3, update stream, create OTA job
+-*Manual `workflow_dispatch`
+
+## IoT thing policy
+
+The certificate policy for `${IOT_THING_NAME}` must allow Jobs and Streams MQTT topics:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "iot:Subscribe",
+  "Resource": [
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/jobs/*",
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/streams/*",
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topicfilter/$aws/things/${IOT_THING_NAME}/jobs/*",
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topicfilter/$aws/things/${IOT_THING_NAME}/streams/*"
+  ]
+},
+{
+  "Effect": "Allow",
+  "Action": "iot:Publish",
+  "Resource": [
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/jobs/*",
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/streams/*"
+  ]
+},
+{
+  "Effect": "Allow",
+  "Action": "iot:Receive",
+  "Resource": [
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/jobs/*",
+    "arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:topic/$aws/things/${IOT_THING_NAME}/streams/*"
+  ]
+}
+```
+
+## IAM role for OTA service (`ota-role`)
+
+Attach `arn:aws:iam::aws:policy/service-role/AmazonFreeRTOSOTAUpdate` and S3 read access:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject"],
+  "Resource": "arn:aws:s3:::${OTA_S3_BUCKET}/*"
+}
+```
+
+Trust policy must allow `iot.amazonaws.com` to assume the role.

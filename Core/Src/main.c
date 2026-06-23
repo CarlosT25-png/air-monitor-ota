@@ -26,6 +26,8 @@
 #include "esp32-at.h"
 #include "configuration.h"
 #include "dht11.h"
+#include "ota.h"
+#include "mcuboot_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -101,7 +103,22 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   dht11_init();
-  printf("\r\n=== test-at debug console (USART3) ===\r\n");
+  printf("\r\n=== air-monitor-ota debug console (USART3) ===\r\n");
+
+  {
+    struct image_version running_ver;
+    char ver_buf[24];
+
+    if (mcuboot_app_get_running_version(&running_ver) == 0 &&
+        mcuboot_app_format_version(&running_ver, ver_buf, sizeof(ver_buf)) > 0)
+    {
+      printf("Firmware v%s\r\n", ver_buf);
+    }
+    else
+    {
+      printf("Firmware v%s\r\n", FW_VERSION_STR);
+    }
+  }
 
   if (esp32_init() != ESP32_OK)
   {
@@ -142,6 +159,12 @@ int main(void)
     Error_Handler();
   }
 
+  if (ota_init() != 0)
+  {
+    printf("OTA init failed\r\n");
+    Error_Handler();
+  }
+
   printf("Subscribed to %s\r\n", MQTT_TOPIC);
   printf("All init steps passed\r\n");
   /* USER CODE END 2 */
@@ -162,6 +185,13 @@ int main(void)
     dht11_data_t dht;
 
     ESP32_MQTT_Poll();
+    ota_process();
+
+    if (ota_is_active())
+    {
+      HAL_Delay(10);
+      continue;
+    }
 
     if (dht11_read(&dht) == DHT11_OK)
     {
