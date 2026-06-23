@@ -1,7 +1,16 @@
 # air-monitor-ota
 
-STM32G474 air monitor with ESP32-AT WiFi/MQTT and AWS IoT MQTT Stream OTA (MCUboot overwrite-only).
-Side note: the ESP32 is flashed with the oficial ESP AT firmware and I only included the root & device certificate, and the private key from AWS.
+STM32G474 air monitor with ESP32-AT WiFi/MQTT and AWS IoT MQTT Stream OTA (MCUboot overwrite-only). Side note: the ESP32 is flashed with the oficial ESP AT firmware and I only included the root & device certificate, and the private key from AWS.
+
+## Demo
+
+### AWS MQTT
+
+![](https://github.com/CarlosT25-png/air-monitor-ota/blob/main/docs/aws.png?raw=true)
+
+### Logs - OTA Update
+
+![](https://github.com/CarlosT25-png/air-monitor-ota/blob/main/docs/ota-2.png?raw=true)
 
 ## Install
 
@@ -33,7 +42,7 @@ Build outputs:
 
 ## AWS OTA
 
-Copy [`aws.md.example`](aws.md.example) to `aws.md`  and fill in your account details.
+Copy [`aws.md.example`](aws.md.example) to `aws.md` and fill in your account details.
 
 GitHub Actions:
 
