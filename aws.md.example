@@ -69,7 +69,7 @@ aws iot update-stream \
 
 aws iot create-ota-update \
   --region ${AWS_REGION} \
-  --ota-update-id air-monitor-ota-${VERSION} \
+  --ota-update-id air-monitor-ota-$(echo "${VERSION}" | tr '.' '-') \
   --targets arn:aws:iot:${AWS_REGION}:${AWS_ACCOUNT_ID}:thing/${IOT_THING_NAME} \
   --files "[{\"fileName\":\"air-monitor-ota-${VERSION}.signed.bin\",\"fileLocation\":{\"stream\":{\"streamId\":\"${OTA_STREAM_ID}\",\"fileId\":0}}}]" \
   --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/ota-role \
@@ -142,6 +142,16 @@ Permissions policy (least privilege):
         "iot:GetOTAUpdate"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ota-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "iot.amazonaws.com"
+        }
+      }
     }
   ]
 }

@@ -85,6 +85,36 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Validate deploy variables
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          IOT_THING_NAME: ${{ vars.IOT_THING_NAME }}
+          OTA_S3_BUCKET: ${{ vars.OTA_S3_BUCKET }}
+          OTA_STREAM_ID: ${{ vars.OTA_STREAM_ID }}
+          OTA_ROLE_ARN: ${{ vars.OTA_ROLE_ARN }}
+        run: |
+          missing=0
+          for name in AWS_REGION AWS_ACCOUNT_ID AWS_ROLE_ARN IOT_THING_NAME OTA_S3_BUCKET OTA_STREAM_ID OTA_ROLE_ARN; do
+            value="${!name}"
+            if [ -z "${value}" ]; then
+              echo "::error::GitHub variable ${name} is empty. Set it under Settings → Secrets and variables → Actions (repository or production environment)."
+              missing=1
+            fi
+          done
+
+          if [ "${#OTA_ROLE_ARN}" -lt 20 ]; then
+            echo "::error::OTA_ROLE_ARN must be the full IAM role ARN (e.g. arn:aws:iam::ACCOUNT_ID:role/ota-role), not just the role name."
+            missing=1
+          fi
+
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "Deploy variables OK (stream=${OTA_STREAM_ID}, bucket=${OTA_S3_BUCKET})"
+
       - name: Upload firmware to S3
         env:
           VERSION: ${{ needs.build.outputs.version }}
@@ -96,11 +126,13 @@ jobs:
 
       - name: Update IoT stream
         env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
           BUCKET: ${{ vars.OTA_S3_BUCKET }}
           STREAM_ID: ${{ vars.OTA_STREAM_ID }}
           OTA_IAM_ROLE: ${{ vars.OTA_ROLE_ARN }}
         run: |
           aws iot update-stream \
+            --region "${AWS_REGION}" \
             --stream-id "${STREAM_ID}" \
             --description "STM32 OTA firmware stream" \
             --files "[{\"fileId\":0,\"s3Location\":{\"bucket\":\"${BUCKET}\",\"key\":\"${S3_KEY}\"}}]" \
@@ -109,22 +141,26 @@ jobs:
       - name: Create OTA update job
         id: ota_job
         env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
           VERSION: ${{ needs.build.outputs.version }}
           ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          REGION: ${{ vars.AWS_REGION }}
           THING: ${{ vars.IOT_THING_NAME }}
           STREAM_ID: ${{ vars.OTA_STREAM_ID }}
           OTA_IAM_ROLE: ${{ vars.OTA_ROLE_ARN }}
         run: |
+          VERSION_SLUG="$(echo "${VERSION}" | tr '.' '-')"
           FILE_NAME="air-monitor-ota-${VERSION}.signed.bin"
-          OTA_UPDATE_ID="air-monitor-ota-${VERSION}"
+          OTA_UPDATE_ID="air-monitor-ota-${VERSION_SLUG}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OTA_UPDATE_ID="air-monitor-ota-${VERSION}-${GITHUB_SHA::7}"
+            OTA_UPDATE_ID="air-monitor-ota-${VERSION_SLUG}-${GITHUB_SHA::7}"
           fi
 
+          echo "OTA update ID: ${OTA_UPDATE_ID}"
+
           aws iot create-ota-update \
+            --region "${AWS_REGION}" \
             --ota-update-id "${OTA_UPDATE_ID}" \
-            --targets "arn:aws:iot:${REGION}:${ACCOUNT_ID}:thing/${THING}" \
+            --targets "arn:aws:iot:${AWS_REGION}:${ACCOUNT_ID}:thing/${THING}" \
             --files "[{\"fileName\":\"${FILE_NAME}\",\"fileLocation\":{\"stream\":{\"streamId\":\"${STREAM_ID}\",\"fileId\":0}}}]" \
             --role-arn "${OTA_IAM_ROLE}" \
             --protocols MQTT \
@@ -134,10 +170,11 @@ jobs:
 
       - name: Wait for OTA job creation
         env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
           OTA_UPDATE_ID: ${{ steps.ota_job.outputs.ota_update_id }}
         run: |
           for i in $(seq 1 30); do
-            STATUS=$(aws iot get-ota-update --ota-update-id "${OTA_UPDATE_ID}" --query otaUpdateStatus --output text)
+            STATUS=$(aws iot get-ota-update --region "${AWS_REGION}" --ota-update-id "${OTA_UPDATE_ID}" --query otaUpdateStatus --output text)
             echo "OTA update status: ${STATUS}"
             case "${STATUS}" in
               CREATE_COMPLETE) exit 0 ;;
